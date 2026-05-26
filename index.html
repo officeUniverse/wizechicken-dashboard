@@ -597,6 +597,10 @@ async function showDetail(issueNumber) {
         <h2>📝 Issue Body</h2>
         <pre>${(issue.body || "").substring(0, 2000)}</pre>
       </div>
+      ${vidM ? `<div class="card" id="editCard">
+        <h2>✏️ Edit Scheduled Video</h2>
+        <div id="editForm" class="loading">Loading…</div>
+      </div>` : ""}
       ${vidM ? `<div class="card" id="ytCommentsCard">
         <h2>💬 YouTube Comments
           <a onclick="refreshYtComments('${vidM[1]}')" style="float:right;font-size:11px;cursor:pointer;color:var(--accent);text-transform:none;letter-spacing:0">↻ Refresh from YouTube</a>
@@ -611,10 +615,101 @@ async function showDetail(issueNumber) {
           <div style="margin-top:8px;font-size:13px;color:var(--text)">${(c.body || "").substring(0, 500)}</div></div></div>`).join("")}
       </div>` : ""}
     `;
-    // After basic detail renders, load artifact contents + YouTube comments inline
+    // After basic detail renders, load artifact contents + YouTube comments + edit form
     if (runM) loadGeneratedFiles(runM[1]);
     if (vidM) loadYtComments(vidM[1]);
+    if (vidM) loadEditForm(vidM[1], runM ? runM[1] : null, title);
   } catch (e) { div.innerHTML = `<div class="muted">Error: ${e.message}</div>`; }
+}
+
+// ===== EDIT VIDEO =====
+async function loadEditForm(videoId, runId, currentTitle) {
+  const div = document.getElementById("editForm");
+  // Compute a useful default publish_at: tomorrow 18:00 SAST = 16:00 UTC
+  const tomorrow = new Date(Date.now() + 24 * 3600 * 1000);
+  tomorrow.setUTCHours(16, 0, 0, 0);
+  const defaultPublish = tomorrow.toISOString().slice(0, 16);   // YYYY-MM-DDTHH:MM
+
+  div.innerHTML = `
+    <div class="muted" style="margin-bottom:16px;font-size:12px">Changes happen via GitHub workflow — takes ~30s to apply, then refresh the YT Studio link to verify.</div>
+
+    <details style="margin-bottom:14px" open>
+      <summary style="cursor:pointer;padding:6px 0;color:var(--accent);font-weight:600">📝 Update title / description / tags</summary>
+      <div style="padding-top:12px">
+        <label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px">Title (leave blank to keep)</label>
+        <input id="editTitle" type="text" placeholder="${escapeHtml(currentTitle)}" style="width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:10px">
+        <label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px">Description (leave blank to keep)</label>
+        <textarea id="editDesc" rows="4" placeholder="Paste new description here…" style="width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-family:inherit;margin-bottom:10px"></textarea>
+        <label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px">Tags (comma-separated, leave blank to keep)</label>
+        <input id="editTags" type="text" placeholder="salary negotiation, ask for a raise, career tips" style="width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:10px">
+        <button onclick="editVideo('${videoId}', 'update_metadata')">💾 Save metadata changes</button>
+      </div>
+    </details>
+
+    <details style="margin-bottom:14px">
+      <summary style="cursor:pointer;padding:6px 0;color:var(--accent);font-weight:600">⏰ Reschedule publish time</summary>
+      <div style="padding-top:12px">
+        <label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px">New publish time (your local time)</label>
+        <input id="editPublishLocal" type="datetime-local" value="${defaultPublish}" style="width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:8px">
+        <div class="muted" style="font-size:11px;margin-bottom:10px">Will be converted to UTC for YouTube. Recommended slot: 18:00 SAST = 16:00 UTC = 12 PM US Eastern.</div>
+        <button onclick="editVideo('${videoId}', 'reschedule')">⏰ Reschedule</button>
+      </div>
+    </details>
+
+    ${runId ? `<details style="margin-bottom:14px">
+      <summary style="cursor:pointer;padding:6px 0;color:var(--accent);font-weight:600">🎨 Swap thumbnail to a different variant</summary>
+      <div style="padding-top:12px">
+        <div class="muted" style="font-size:12px;margin-bottom:10px">Picks from the original generated set (run #${runId})</div>
+        <div style="display:flex;gap:8px">
+          <button class="secondary" onclick="editVideo('${videoId}', 'update_thumbnail', '1', '${runId}')">Use Variant 1</button>
+          <button class="secondary" onclick="editVideo('${videoId}', 'update_thumbnail', '2', '${runId}')">Use Variant 2</button>
+          <button class="secondary" onclick="editVideo('${videoId}', 'update_thumbnail', '3', '${runId}')">Use Variant 3</button>
+        </div>
+      </div>
+    </details>` : ""}
+
+    <details style="margin-bottom:0">
+      <summary style="cursor:pointer;padding:6px 0;color:var(--red);font-weight:600">🗑️ Delete video</summary>
+      <div style="padding-top:12px">
+        <div class="muted" style="margin-bottom:10px;font-size:13px">Permanent. Removes the video from YouTube entirely. Cannot be undone.</div>
+        <button class="danger" onclick="deleteVideoConfirm('${videoId}', '${escapeHtml(currentTitle).replace(/'/g, "\\'")}')" style="background:var(--red)">Delete from YouTube</button>
+      </div>
+    </details>`;
+}
+
+async function editVideo(videoId, action, variant, runId) {
+  const inputs = { video_id: videoId, action };
+  if (action === "update_metadata") {
+    const t = document.getElementById("editTitle").value.trim();
+    const d = document.getElementById("editDesc").value;
+    const g = document.getElementById("editTags").value.trim();
+    if (!t && !d && !g) return toast("Nothing to update — fill at least one field", "error");
+    if (t) inputs.new_title = t;
+    if (d) inputs.new_description = d;
+    if (g) inputs.new_tags = g;
+  } else if (action === "reschedule") {
+    const local = document.getElementById("editPublishLocal").value;
+    if (!local) return toast("Pick a publish time", "error");
+    inputs.new_publish_at = new Date(local).toISOString();
+  } else if (action === "update_thumbnail") {
+    inputs.variant = variant;
+    inputs.run_id  = runId;
+  }
+  try {
+    await gh(`/repos/${REPO}/actions/workflows/edit-video.yml/dispatches`, {
+      method: "POST", body: JSON.stringify({ ref: "main", inputs }),
+    });
+    toast(`⚡ ${action} triggered — applies in ~30s`, "success");
+  } catch (e) { toast(`❌ ${e.message}`, "error"); }
+}
+
+function deleteVideoConfirm(videoId, title) {
+  const typed = prompt(`Type the video title EXACTLY to confirm deletion:\n\n"${title}"`);
+  if (typed !== title) {
+    if (typed !== null) toast("Title didn't match. Delete cancelled.", "error");
+    return;
+  }
+  editVideo(videoId, "delete");
 }
 
 // ===== YOUTUBE COMMENTS =====
