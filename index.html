@@ -420,16 +420,46 @@ async function generateTopic(n) {
 
 async function renderVideosCard() {
   const issues = await gh(`/repos/${REPO}/issues?labels=video&state=open&per_page=10`);
+
+  // Get autonomy wait so we can show countdown
+  let waitMin = 60;
+  let mode = "assisted";
+  try {
+    const r = await gh(`/repos/${REPO}/contents/autonomy.json`);
+    const cfg = JSON.parse(atob(r.content));
+    mode = cfg.mode || "assisted";
+    waitMin = cfg.wait_minutes_per_mode?.[mode] ?? 60;
+  } catch (_) {}
+
   document.getElementById("videos").innerHTML = issues.length
-    ? issues.map(i => `
-        <div class="row-card">
-          <div><strong>${i.title}</strong>
-            <div class="meta">Opened ${timeAgo(i.created_at)} · <a href="${i.html_url}" target="_blank">view ↗</a></div></div>
-          <div style="display:flex;gap:6px">
+    ? issues.map(i => {
+        const ageMin = (Date.now() - new Date(i.created_at).getTime()) / 60000;
+        const remainingMin = waitMin - ageMin;
+        let countdown;
+        if (waitMin < 0) {
+          countdown = `<span style="color:var(--text-dim);font-size:11px">⏸ Manual — no auto-pick</span>`;
+        } else if (remainingMin <= 0) {
+          countdown = `<span style="color:var(--yellow);font-size:11px">⏰ Auto-pick imminent (within 15m)</span>`;
+        } else {
+          const h = Math.floor(remainingMin / 60);
+          const m = Math.floor(remainingMin % 60);
+          const label = h > 0 ? `${h}h ${m}m` : `${m}m`;
+          const colour = remainingMin < 10 ? "var(--red)" : remainingMin < 30 ? "var(--yellow)" : "var(--text-dim)";
+          countdown = `<span style="color:${colour};font-size:11px">⏰ Auto-picks variant 1 in ${label}</span>`;
+        }
+        return `<div class="row-card">
+          <div style="flex:1;min-width:0">
+            <strong>${i.title}</strong>
+            <div class="meta">Opened ${timeAgo(i.created_at)} · <a href="${i.html_url}" target="_blank">view ↗</a></div>
+            <div style="margin-top:4px">${countdown}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="secondary" onclick="showDetail('${i.number}')" title="Open in dashboard">Open</button>
             <button class="secondary" onclick="uploadVariant(${i.number}, 1)">1</button>
             <button class="secondary" onclick="uploadVariant(${i.number}, 2)">2</button>
             <button class="secondary" onclick="uploadVariant(${i.number}, 3)">3</button>
-          </div></div>`).join("")
+          </div></div>`;
+      }).join("")
     : "<div class='muted'>No videos awaiting review</div>";
 }
 
@@ -675,6 +705,77 @@ async function postYtReply(videoId, commentId) {
   }
 }
 
+const FEEDBACK_CATEGORIES = [
+  { key: "thumbnails", label: "🎨 Thumbnails", placeholder: "e.g. text was too big and cut off, chicken looked wrong, glow too strong…" },
+  { key: "video", label: "🎬 Video / pacing", placeholder: "e.g. opening too slow, scene 4 felt rushed, transitions clunky…" },
+  { key: "script", label: "📝 Script / narration", placeholder: "e.g. too preachy, repeated 'that's right' too much, ending weak…" },
+  { key: "audio", label: "🔊 Voice / audio", placeholder: "e.g. voice too monotone, pronounced 'AI' weirdly, volume uneven…" },
+];
+
+async function renderFeedbackSection(runId) {
+  // Load existing feedback if any
+  let existing = {};
+  let sha = null;
+  try {
+    const r = await gh(`/repos/${REPO}/contents/data/feedback/${runId}.json`);
+    existing = JSON.parse(atob(r.content));
+    sha = r.sha;
+  } catch (_) {}
+
+  // Append below the files content (inside same card)
+  const filesCard = document.getElementById("filesCard");
+  let fbWrap = document.getElementById("feedbackWrap");
+  if (!fbWrap) {
+    fbWrap = document.createElement("div");
+    fbWrap.id = "feedbackWrap";
+    fbWrap.style.cssText = "margin-top:24px;padding-top:20px;border-top:1px solid var(--border)";
+    filesCard.appendChild(fbWrap);
+  }
+  window._feedbackSha = sha;
+  window._feedbackData = existing;
+
+  fbWrap.innerHTML = `
+    <h3 style="font-size:13px;color:var(--text-dim);margin:0 0 12px;text-transform:uppercase;letter-spacing:0.06em">📋 Feedback (helps future generations)</h3>
+    <div class="muted" style="margin-bottom:12px;font-size:12px">Anything you write here gets stored and can be fed into future video prompts so the system learns from your taste.</div>
+    ${FEEDBACK_CATEGORIES.map(c => `
+      <div style="margin-bottom:12px">
+        <label style="display:block;font-size:13px;margin-bottom:4px;color:var(--text)">${c.label}</label>
+        <textarea id="fb-${c.key}" rows="2" placeholder="${c.placeholder}"
+                  style="width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:inherit;resize:vertical">${escapeHtml(existing[c.key] || "")}</textarea>
+      </div>`).join("")}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+      <span class="muted" id="fbStatus">${existing.saved_at ? `Last saved ${timeAgo(existing.saved_at)}` : 'Not saved yet'}</span>
+      <button onclick="saveFeedback('${runId}')">💾 Save Feedback</button>
+    </div>`;
+}
+
+async function saveFeedback(runId) {
+  const data = {
+    run_id: runId,
+    saved_at: new Date().toISOString(),
+    ...Object.fromEntries(FEEDBACK_CATEGORIES.map(c => [c.key, document.getElementById(`fb-${c.key}`).value.trim()])),
+  };
+  // Skip save if all categories empty
+  if (FEEDBACK_CATEGORIES.every(c => !data[c.key])) {
+    toast("Nothing to save — all categories empty", "error");
+    return;
+  }
+  try {
+    const body = {
+      message: `Feedback for run ${runId}`,
+      content: btoa(JSON.stringify(data, null, 2) + "\n"),
+    };
+    if (window._feedbackSha) body.sha = window._feedbackSha;
+    const r = await gh(`/repos/${REPO}/contents/data/feedback/${runId}.json`, {
+      method: "PUT", body: JSON.stringify(body),
+    });
+    window._feedbackSha = r.content.sha;
+    window._feedbackData = data;
+    document.getElementById("fbStatus").textContent = "✅ Saved just now";
+    toast("✅ Feedback saved", "success");
+  } catch (e) { toast(`❌ ${e.message}`, "error"); }
+}
+
 async function loadGeneratedFiles(runId) {
   const container = document.getElementById("filesContent");
   try {
@@ -753,6 +854,8 @@ async function loadGeneratedFiles(runId) {
 
     if (!html) html = `<div class='muted'>Artifact contained no recognizable thumbnails/video.</div>`;
     container.innerHTML = html;
+    // After files render, attach the feedback section
+    renderFeedbackSection(runId);
   } catch (e) {
     container.innerHTML = `<div class='muted'>Couldn't auto-load: ${e.message}<br><br>
       <a class="btn secondary" href="https://github.com/${REPO}/actions/runs/${runId}" target="_blank">Download manually from Actions ↗</a></div>`;
