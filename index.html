@@ -156,8 +156,18 @@
     <div id="videos"><div class="loading">Loading…</div></div>
   </div>
 
+  <div class="card" id="liveCard" style="display:none">
+    <h2>🟢 Running Now</h2>
+    <div id="liveRuns"></div>
+  </div>
+
   <div class="card">
-    <h2>⚙️ Recent Runs</h2>
+    <h2>📋 Queue Status</h2>
+    <div id="queueStatus" class="loading">Loading…</div>
+  </div>
+
+  <div class="card">
+    <h2>⚙️ Recent Runs (last 8)</h2>
     <div id="runs"><div class="loading">Loading…</div></div>
   </div>
 </div>
@@ -327,17 +337,75 @@ async function uploadVariant(issueNum, variant) {
 }
 
 async function renderRuns() {
-  const data = await gh(`/repos/${REPO}/actions/runs?per_page=8`);
-  document.getElementById("runs").innerHTML = data.workflow_runs.map(r => `
+  const data = await gh(`/repos/${REPO}/actions/runs?per_page=20`);
+  // Split into live (in_progress, queued) vs recent
+  const live = data.workflow_runs.filter(r => r.status !== "completed");
+  const recent = data.workflow_runs.filter(r => r.status === "completed").slice(0, 8);
+
+  // Live panel
+  const liveCard = document.getElementById("liveCard");
+  const liveDiv = document.getElementById("liveRuns");
+  if (live.length === 0) {
+    liveCard.style.display = "none";
+  } else {
+    liveCard.style.display = "";
+    liveDiv.innerHTML = await Promise.all(live.map(async r => {
+      // Get current step from jobs
+      let stepLabel = "";
+      try {
+        const jr = await gh(`/repos/${REPO}/actions/runs/${r.id}/jobs`);
+        const job = jr.jobs[0];
+        const running = job?.steps?.find(s => s.status === "in_progress");
+        const lastDone = [...(job?.steps || [])].reverse().find(s => s.status === "completed");
+        stepLabel = running?.name || lastDone?.name || job?.status || "";
+      } catch (_) {}
+      const elapsed = Math.round((Date.now() - new Date(r.run_started_at || r.created_at).getTime()) / 1000);
+      const mm = Math.floor(elapsed / 60), ss = elapsed % 60;
+      return `
+        <div class="run-row" style="background: #fcefc7; border-radius: 6px; padding: 12px;">
+          <div>
+            <strong>🟡 ${r.name}</strong>
+            <div class="meta">${stepLabel || "starting…"} · running for ${mm}:${ss.toString().padStart(2,'0')}</div>
+          </div>
+          <a class="btn secondary" href="${r.html_url}" target="_blank" style="font-size: 12px;">Logs ↗</a>
+        </div>`;
+    })).then(s => s.join(""));
+  }
+
+  // Recent runs
+  document.getElementById("runs").innerHTML = recent.map(r => `
     <div class="run-row">
       <div>
         <strong>${r.name}</strong>
         <div class="meta">${timeAgo(r.created_at)} · ${r.event}</div>
       </div>
-      <span class="badge ${r.status === 'completed' ? r.conclusion : r.status}">
-        ${r.status === 'completed' ? r.conclusion : r.status}
-      </span>
+      <span class="badge ${r.conclusion}">${r.conclusion}</span>
     </div>`).join("");
+}
+
+async function renderQueueStatus() {
+  // Count issues by label to show "what's in the pipeline right now"
+  const [reportOpen, awaitThumb, scheduled, optimization] = await Promise.all([
+    gh(`/repos/${REPO}/issues?labels=report&state=open&per_page=5`),
+    gh(`/repos/${REPO}/issues?labels=awaiting-thumbnail&state=open&per_page=5`),
+    gh(`/repos/${REPO}/issues?labels=scheduled&state=all&per_page=5`),
+    gh(`/repos/${REPO}/issues?labels=optimization&state=open&per_page=5`),
+  ]);
+
+  const cell = (icon, label, count, hint) => `
+    <div class="stat" style="background: var(--surface-2);">
+      <span class="label">${icon} ${label}</span>
+      <span class="value">${count}</span>
+      <span class="muted" style="font-size: 11px; margin-top: 4px;">${hint}</span>
+    </div>`;
+
+  document.getElementById("queueStatus").innerHTML = `
+    <div class="stats-grid">
+      ${cell("📊", "Open Reports", reportOpen.length, "Awaiting /generate")}
+      ${cell("🎨", "Awaiting Thumbnail", awaitThumb.length, "Awaiting /upload")}
+      ${cell("⏰", "Scheduled", scheduled.length, "Uploaded + scheduled")}
+      ${cell("🔄", "Optimization Reports", optimization.length, "Weekly scan results")}
+    </div>`;
 }
 
 function timeAgo(iso) {
@@ -412,15 +480,28 @@ async function setAutonomy(mode) {
 
 async function refreshAll() {
   try {
-    await Promise.all([loadAutonomy(), renderReport(), renderVideos(), renderRuns()]);
+    await Promise.all([
+      loadAutonomy(),
+      renderReport(),
+      renderVideos(),
+      renderRuns(),
+      renderQueueStatus(),
+    ]);
   } catch (e) {
     toast(`Error: ${e.message}`, "error");
     if (e.message.includes("401")) logout();
   }
 }
 
-// Auto-refresh every 60s
-setInterval(refreshAll, 60000);
+// Faster refresh when something is running, slower when idle
+let refreshTimer = null;
+function scheduleRefresh() {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  const hasLive = document.getElementById("liveCard")?.style.display !== "none";
+  const intervalMs = hasLive ? 15000 : 60000;   // 15s if live, 60s if idle
+  refreshTimer = setTimeout(() => { refreshAll().then(scheduleRefresh); }, intervalMs);
+}
+scheduleRefresh();
 </script>
 </body>
 </html>
