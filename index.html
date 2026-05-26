@@ -567,6 +567,12 @@ async function showDetail(issueNumber) {
         <h2>📝 Issue Body</h2>
         <pre>${(issue.body || "").substring(0, 2000)}</pre>
       </div>
+      ${vidM ? `<div class="card" id="ytCommentsCard">
+        <h2>💬 YouTube Comments
+          <a onclick="refreshYtComments('${vidM[1]}')" style="float:right;font-size:11px;cursor:pointer;color:var(--accent);text-transform:none;letter-spacing:0">↻ Refresh from YouTube</a>
+        </h2>
+        <div id="ytCommentsContent" class="loading">Loading…</div>
+      </div>` : ""}
       ${runM ? `<div class="card" id="filesCard"><h2>📦 Generated Files</h2><div id="filesContent" class="loading">Loading thumbnails…</div></div>` : ""}
       ${comments.length ? `<div class="card">
         <h2>💬 Comments (${comments.length})</h2>
@@ -575,9 +581,98 @@ async function showDetail(issueNumber) {
           <div style="margin-top:8px;font-size:13px;color:var(--text)">${(c.body || "").substring(0, 500)}</div></div></div>`).join("")}
       </div>` : ""}
     `;
-    // After basic detail renders, load artifact contents inline
+    // After basic detail renders, load artifact contents + YouTube comments inline
     if (runM) loadGeneratedFiles(runM[1]);
+    if (vidM) loadYtComments(vidM[1]);
   } catch (e) { div.innerHTML = `<div class="muted">Error: ${e.message}</div>`; }
+}
+
+// ===== YOUTUBE COMMENTS =====
+async function loadYtComments(videoId) {
+  const container = document.getElementById("ytCommentsContent");
+  try {
+    const r = await gh(`/repos/${REPO}/contents/data/comments/${videoId}.json`);
+    const data = JSON.parse(atob(r.content));
+    renderYtComments(videoId, data);
+  } catch (e) {
+    container.innerHTML = `<div class='muted'>No cached comments yet. <a onclick="refreshYtComments('${videoId}')" style="color:var(--accent);cursor:pointer">Click to fetch from YouTube</a> (takes ~30s).</div>`;
+  }
+}
+
+function renderYtComments(videoId, data) {
+  const container = document.getElementById("ytCommentsContent");
+  const comments = data.comments || [];
+  const fetched = data.fetched_at ? timeAgo(data.fetched_at) : "—";
+  if (!comments.length) {
+    container.innerHTML = `<div class='muted'>No comments on this video yet. (Last refresh: ${fetched})</div>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="muted" style="margin-bottom:12px">Last fetched ${fetched} · ${comments.length} comment${comments.length === 1 ? '' : 's'}</div>
+    ${comments.map(c => `
+      <div class="row-card" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="flex:1;min-width:0">
+            <strong>@${c.author}</strong>
+            <span class="meta">· ${timeAgo(c.published_at)}${c.likes ? ` · ${c.likes} 👍` : ''}</span>
+            <div style="margin-top:4px;font-size:14px;color:var(--text)">${escapeHtml(c.text)}</div>
+          </div>
+        </div>
+        ${(c.replies || []).map(r => `
+          <div style="margin-left:24px;padding:8px;background:var(--bg);border-radius:6px;border-left:2px solid var(--accent)">
+            <strong style="font-size:13px">@${r.author}${r.is_owner ? ' (you)' : ''}</strong>
+            <span class="meta">· ${timeAgo(r.published_at)}</span>
+            <div style="margin-top:2px;font-size:13px">${escapeHtml(r.text)}</div>
+          </div>`).join("")}
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <input type="text" id="reply-${c.id}" placeholder="Reply as @wizechicken…"
+                 style="flex:1;padding:6px 10px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:13px"
+                 onkeydown="if(event.key==='Enter') postYtReply('${videoId}', '${c.id}')">
+          <button class="secondary" onclick="postYtReply('${videoId}', '${c.id}')">Reply</button>
+        </div>
+      </div>
+    `).join("")}
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+async function refreshYtComments(videoId) {
+  document.getElementById("ytCommentsContent").innerHTML = `<div class="loading">Triggering YouTube fetch (~30s)…</div>`;
+  try {
+    await gh(`/repos/${REPO}/actions/workflows/youtube-comments.yml/dispatches`, {
+      method: "POST",
+      body: JSON.stringify({ ref: "main", inputs: { action: "list", video_id: videoId } }),
+    });
+    toast("⚡ Fetching from YouTube — refresh in 35s", "success");
+    setTimeout(() => loadYtComments(videoId), 35000);
+  } catch (e) { toast(`❌ ${e.message}`, "error"); }
+}
+
+async function postYtReply(videoId, commentId) {
+  const input = document.getElementById(`reply-${commentId}`);
+  const text = input.value.trim();
+  if (!text) return;
+  if (!confirm(`Post this reply as @wizechicken?\n\n"${text}"`)) return;
+  input.disabled = true;
+  try {
+    await gh(`/repos/${REPO}/actions/workflows/youtube-comments.yml/dispatches`, {
+      method: "POST",
+      body: JSON.stringify({
+        ref: "main",
+        inputs: { action: "reply", video_id: videoId, comment_id: commentId, reply_text: text },
+      }),
+    });
+    input.value = "";
+    toast("⚡ Reply posting — refresh in 35s", "success");
+    setTimeout(() => loadYtComments(videoId), 35000);
+  } catch (e) {
+    toast(`❌ ${e.message}`, "error");
+  } finally {
+    input.disabled = false;
+  }
 }
 
 async function loadGeneratedFiles(runId) {
