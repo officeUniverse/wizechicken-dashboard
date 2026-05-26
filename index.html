@@ -831,8 +831,10 @@ async function renderFeedbackSection(runId) {
   window._feedbackData = existing;
 
   fbWrap.innerHTML = `
-    <h3 style="font-size:13px;color:var(--text-dim);margin:0 0 12px;text-transform:uppercase;letter-spacing:0.06em">📋 Feedback (helps future generations)</h3>
-    <div class="muted" style="margin-bottom:12px;font-size:12px">Anything you write here gets stored and can be fed into future video prompts so the system learns from your taste.</div>
+    <h3 style="font-size:13px;color:var(--text-dim);margin:0 0 12px;text-transform:uppercase;letter-spacing:0.06em">📋 Feedback (auto-applied to next render)</h3>
+    <div style="margin-bottom:12px;font-size:12px;padding:10px;background:rgba(63,185,80,0.08);border:1px solid var(--green);border-radius:6px;color:var(--text)">
+      ✅ <strong>The learning loop is live.</strong> Anything you save here gets prepended to the Claude script + FLUX image prompts on the NEXT video render. The system actively avoids past mistakes you've called out.
+    </div>
     ${FEEDBACK_CATEGORIES.map(c => `
       <div style="margin-bottom:12px">
         <label style="display:block;font-size:13px;margin-bottom:4px;color:var(--text)">${c.label}</label>
