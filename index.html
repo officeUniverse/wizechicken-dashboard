@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🐔 WizeChicken Control</title>
+<!-- JSZip for unpacking artifact downloads in the browser -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   :root {
     --bg: #0d1117;
@@ -565,6 +567,7 @@ async function showDetail(issueNumber) {
         <h2>📝 Issue Body</h2>
         <pre>${(issue.body || "").substring(0, 2000)}</pre>
       </div>
+      ${runM ? `<div class="card" id="filesCard"><h2>📦 Generated Files</h2><div id="filesContent" class="loading">Loading thumbnails…</div></div>` : ""}
       ${comments.length ? `<div class="card">
         <h2>💬 Comments (${comments.length})</h2>
         ${comments.map(c => `<div class="row-card"><div><strong>@${c.user.login}</strong>
@@ -572,7 +575,93 @@ async function showDetail(issueNumber) {
           <div style="margin-top:8px;font-size:13px;color:var(--text)">${(c.body || "").substring(0, 500)}</div></div></div>`).join("")}
       </div>` : ""}
     `;
+    // After basic detail renders, load artifact contents inline
+    if (runM) loadGeneratedFiles(runM[1]);
   } catch (e) { div.innerHTML = `<div class="muted">Error: ${e.message}</div>`; }
+}
+
+async function loadGeneratedFiles(runId) {
+  const container = document.getElementById("filesContent");
+  try {
+    // 1. List artifacts for this run
+    const arts = await gh(`/repos/${REPO}/actions/runs/${runId}/artifacts`);
+    if (!arts.artifacts || arts.artifacts.length === 0) {
+      container.innerHTML = `<div class='muted'>No artifact found. Workflow may still be running, or artifact expired (14-day retention).</div>`;
+      return;
+    }
+    const artifact = arts.artifacts[0];
+
+    if (artifact.expired) {
+      container.innerHTML = `<div class='muted'>Artifact expired (>14 days). Re-render to regenerate.</div>`;
+      return;
+    }
+
+    container.innerHTML = `<div class="loading">Downloading artifact (${(artifact.size_in_bytes / 1024 / 1024).toFixed(1)} MB)…</div>`;
+
+    // 2. Download the zip — token follows the redirect to S3 since fetch preserves
+    //    the Authorization header on GitHub-controlled redirects
+    const zipResp = await fetch(`${API}/repos/${REPO}/actions/artifacts/${artifact.id}/zip`, {
+      headers: { "Authorization": `Bearer ${getToken()}`, "Accept": "application/vnd.github+json" },
+    });
+    if (!zipResp.ok) throw new Error(`Download failed: ${zipResp.status}`);
+
+    container.innerHTML = `<div class="loading">Unpacking…</div>`;
+    const zipBlob = await zipResp.blob();
+    const zip = await JSZip.loadAsync(zipBlob);
+
+    // 3. Find thumbnails + video
+    const thumbBlobs = {};
+    let videoBlob = null;
+    let videoName = "final.mp4";
+    let videoSize = 0;
+    for (const [name, file] of Object.entries(zip.files)) {
+      if (file.dir) continue;
+      if (name.includes("thumbnails/variant_") && name.endsWith(".png")) {
+        const m = name.match(/variant_(\d)\.png/);
+        if (m) {
+          const blob = await file.async("blob");
+          thumbBlobs[m[1]] = URL.createObjectURL(new Blob([blob], { type: "image/png" }));
+        }
+      }
+      if (name.endsWith("final.mp4")) {
+        videoSize = file._data.uncompressedSize;
+        videoName = name;
+      }
+    }
+
+    // 4. Render
+    let html = "";
+    if (Object.keys(thumbBlobs).length) {
+      html += `<h3 style="font-size:13px;color:var(--text-dim);margin:0 0 12px;text-transform:uppercase;letter-spacing:0.06em">Thumbnails</h3>`;
+      html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:24px">`;
+      for (const v of ["1", "2", "3"]) {
+        if (thumbBlobs[v]) {
+          html += `<div>
+            <a href="${thumbBlobs[v]}" target="_blank" title="Open variant ${v} full size">
+              <img src="${thumbBlobs[v]}" style="width:100%;border-radius:6px;border:1px solid var(--border)" alt="Variant ${v}">
+            </a>
+            <div class="meta" style="margin-top:6px;text-align:center">Variant ${v}</div>
+          </div>`;
+        }
+      }
+      html += `</div>`;
+    }
+
+    if (videoSize) {
+      const mb = (videoSize / 1024 / 1024).toFixed(0);
+      html += `<h3 style="font-size:13px;color:var(--text-dim);margin:0 0 12px;text-transform:uppercase;letter-spacing:0.06em">Video</h3>`;
+      html += `<div class="row-card">
+        <div><strong>final.mp4</strong><div class="meta">~${mb} MB · download to preview locally</div></div>
+        <a class="btn" href="https://github.com/${REPO}/actions/runs/${runId}" target="_blank">Get from Actions ↗</a>
+      </div>`;
+    }
+
+    if (!html) html = `<div class='muted'>Artifact contained no recognizable thumbnails/video.</div>`;
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<div class='muted'>Couldn't auto-load: ${e.message}<br><br>
+      <a class="btn secondary" href="https://github.com/${REPO}/actions/runs/${runId}" target="_blank">Download manually from Actions ↗</a></div>`;
+  }
 }
 
 // ===== TOPICS PAGE =====
