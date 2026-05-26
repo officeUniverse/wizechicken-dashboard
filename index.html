@@ -707,6 +707,7 @@ async function postYtReply(videoId, commentId) {
 
 const FEEDBACK_CATEGORIES = [
   { key: "thumbnails", label: "🎨 Thumbnails", placeholder: "e.g. text was too big and cut off, chicken looked wrong, glow too strong…" },
+  { key: "scene_images", label: "🖼️ Scene images", placeholder: "e.g. scene 5 had a wall of faces instead of one chicken, image 12 had baked-in text…" },
   { key: "video", label: "🎬 Video / pacing", placeholder: "e.g. opening too slow, scene 4 felt rushed, transitions clunky…" },
   { key: "script", label: "📝 Script / narration", placeholder: "e.g. too preachy, repeated 'that's right' too much, ending weak…" },
   { key: "audio", label: "🔊 Voice / audio", placeholder: "e.g. voice too monotone, pronounced 'AI' weirdly, volume uneven…" },
@@ -805,23 +806,26 @@ async function loadGeneratedFiles(runId) {
     const zipBlob = await zipResp.blob();
     const zip = await JSZip.loadAsync(zipBlob);
 
-    // 3. Find thumbnails + video
+    // 3. Find thumbnails + scene images + video
     const thumbBlobs = {};
-    let videoBlob = null;
-    let videoName = "final.mp4";
+    const sceneBlobs = {};   // { "000": blobUrl, "001": ... }
     let videoSize = 0;
     for (const [name, file] of Object.entries(zip.files)) {
       if (file.dir) continue;
-      if (name.includes("thumbnails/variant_") && name.endsWith(".png")) {
-        const m = name.match(/variant_(\d)\.png/);
-        if (m) {
-          const blob = await file.async("blob");
-          thumbBlobs[m[1]] = URL.createObjectURL(new Blob([blob], { type: "image/png" }));
-        }
+      const tm = name.match(/thumbnails\/variant_(\d)\.png$/);
+      if (tm) {
+        const blob = await file.async("blob");
+        thumbBlobs[tm[1]] = URL.createObjectURL(new Blob([blob], { type: "image/png" }));
+        continue;
+      }
+      const sm = name.match(/images\/img_(\d{3})\.png$/);
+      if (sm) {
+        const blob = await file.async("blob");
+        sceneBlobs[sm[1]] = URL.createObjectURL(new Blob([blob], { type: "image/png" }));
+        continue;
       }
       if (name.endsWith("final.mp4")) {
         videoSize = file._data.uncompressedSize;
-        videoName = name;
       }
     }
 
@@ -839,6 +843,23 @@ async function loadGeneratedFiles(runId) {
             <div class="meta" style="margin-top:6px;text-align:center">Variant ${v}</div>
           </div>`;
         }
+      }
+      html += `</div>`;
+    }
+
+    const sceneKeys = Object.keys(sceneBlobs).sort();
+    if (sceneKeys.length) {
+      html += `<h3 style="font-size:13px;color:var(--text-dim);margin:0 0 12px;text-transform:uppercase;letter-spacing:0.06em">Scene Images (${sceneKeys.length})</h3>`;
+      html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:24px">`;
+      for (const k of sceneKeys) {
+        const sceneNum = Math.floor(parseInt(k) / 2) + 1;
+        const half = parseInt(k) % 2 === 0 ? "A" : "B";
+        html += `<div>
+          <a href="${sceneBlobs[k]}" target="_blank" title="Image ${k} (scene ${sceneNum}${half})">
+            <img src="${sceneBlobs[k]}" style="width:100%;border-radius:4px;border:1px solid var(--border)" loading="lazy" alt="img_${k}">
+          </a>
+          <div class="meta" style="margin-top:4px;text-align:center;font-size:11px">S${sceneNum}${half}</div>
+        </div>`;
       }
       html += `</div>`;
     }
