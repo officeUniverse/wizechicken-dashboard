@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🐔 WizeChicken Control</title>
+<style>
+  :root {
+    --bg: #faf8f3;
+    --surface: #fff;
+    --surface-2: #f5f1e8;
+    --border: #e6dfd0;
+    --text: #1e1e1e;
+    --muted: #6b6258;
+    --accent: #E8662A;
+    --accent-dark: #c5541e;
+    --good: #1f8a3c;
+    --warn: #b8761d;
+    --bad: #c0392b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.5;
+    padding: 16px; max-width: 1200px; margin: 0 auto;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 0 20px; border-bottom: 1px solid var(--border); margin-bottom: 24px;
+  }
+  h1 { font-size: 22px; }
+  h1 .accent { color: var(--accent); }
+  nav { font-size: 13px; color: var(--muted); display: flex; gap: 16px; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a:hover { color: var(--accent); }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 20px; margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); font-weight: 600; margin-bottom: 12px;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+  .stat {
+    display: flex; flex-direction: column; padding: 12px;
+    background: var(--surface-2); border-radius: 8px;
+  }
+  .stat .label { font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
+  .stat .value { font-size: 24px; font-weight: 700; color: var(--accent); margin-top: 2px; }
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  @media (max-width: 700px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+  .topic-card {
+    background: var(--surface-2); border-radius: 8px; padding: 14px; margin-bottom: 10px;
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  }
+  .topic-card .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .topic-card .meta a { color: var(--muted); }
+  .topic-card strong { font-size: 14px; display: block; }
+  button, .btn {
+    background: var(--accent); color: white; border: none; padding: 8px 14px;
+    border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;
+    text-decoration: none; display: inline-block; white-space: nowrap;
+    transition: background 0.15s;
+  }
+  button:hover, .btn:hover { background: var(--accent-dark); }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button.secondary:hover { background: var(--accent); color: white; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .run-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px; border-bottom: 1px solid var(--border); font-size: 13px;
+  }
+  .run-row:last-child { border-bottom: none; }
+  .badge {
+    padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .badge.success { background: #d4f0db; color: var(--good); }
+  .badge.failure { background: #f7d4d0; color: var(--bad); }
+  .badge.in_progress { background: #fcefc7; color: var(--warn); }
+  .badge.queued { background: #e6dfd0; color: var(--muted); }
+  #setup {
+    max-width: 480px; margin: 100px auto; text-align: center; padding: 32px;
+    background: var(--surface); border-radius: 12px; border: 1px solid var(--border);
+  }
+  #setup input {
+    width: 100%; padding: 10px; margin: 12px 0; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 14px; font-family: ui-monospace, monospace;
+  }
+  .loading { color: var(--muted); font-style: italic; padding: 20px; text-align: center; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .toast {
+    position: fixed; bottom: 20px; right: 20px; background: #333; color: white;
+    padding: 12px 20px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    z-index: 1000; font-size: 14px;
+  }
+  .toast.error { background: var(--bad); }
+  .toast.success { background: var(--good); }
+</style>
+</head>
+<body>
+
+<!-- One-time setup screen -->
+<div id="setup" style="display:none">
+  <h1>🐔 WizeChicken Control</h1>
+  <p style="margin: 16px 0; color: var(--muted)">First time setup. Paste a GitHub Personal Access Token to enable the dashboard.</p>
+  <p style="text-align:left; font-size: 13px; margin: 20px 0;">
+    1. Open <a href="https://github.com/settings/tokens/new?scopes=repo,workflow&description=WizeChicken%20Dashboard" target="_blank" style="color: var(--accent)">this link to create a token</a><br>
+    2. Scopes already pre-checked: <code>repo</code> + <code>workflow</code><br>
+    3. Click "Generate token" at the bottom, copy it, paste below
+  </p>
+  <input id="tokenInput" type="password" placeholder="ghp_..." autofocus>
+  <button onclick="saveToken()" style="width: 100%; padding: 12px; font-size: 15px;">Save & Open Dashboard</button>
+  <p class="muted" style="margin-top: 12px;">Stored only in this browser's localStorage. Never sent anywhere except GitHub API.</p>
+</div>
+
+<!-- Main dashboard -->
+<div id="dashboard" style="display:none">
+  <header>
+    <h1>🐔 <span class="accent">WizeChicken</span> Control</h1>
+    <nav>
+      <a href="https://studio.youtube.com" target="_blank">YT Studio</a>
+      <a href="https://youtube.com/@wizechickens" target="_blank">Channel</a>
+      <a href="https://github.com/officeUniverse/wizechicken-analytics/actions" target="_blank">Actions</a>
+      <a href="#" onclick="refreshAll(); return false;">↻ Refresh</a>
+      <a href="#" onclick="logout(); return false;">Logout</a>
+    </nav>
+  </header>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>📊 Channel — Last 28 Days</h2>
+      <div id="stats" class="stats-grid"><div class="loading">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>📥 Traffic Sources</h2>
+      <div id="traffic"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🔍 Today's ICAHN Topic Picks — One-Click Generate</h2>
+    <div id="topics"><div class="loading">Loading…</div></div>
+  </div>
+
+  <div class="card">
+    <h2>🎬 Videos Awaiting Your Thumbnail Pick</h2>
+    <div id="videos"><div class="loading">Loading…</div></div>
+  </div>
+
+  <div class="card">
+    <h2>⚙️ Recent Runs</h2>
+    <div id="runs"><div class="loading">Loading…</div></div>
+  </div>
+</div>
+
+<script>
+const REPO = "officeUniverse/wizechicken-analytics";
+const API = "https://api.github.com";
+
+function getToken() { return localStorage.getItem("ghToken"); }
+function saveToken() {
+  const t = document.getElementById("tokenInput").value.trim();
+  if (!t) return alert("Paste a token first");
+  localStorage.setItem("ghToken", t);
+  document.getElementById("setup").style.display = "none";
+  document.getElementById("dashboard").style.display = "block";
+  refreshAll();
+}
+function logout() { localStorage.removeItem("ghToken"); location.reload(); }
+
+if (!getToken()) {
+  document.getElementById("setup").style.display = "block";
+} else {
+  document.getElementById("dashboard").style.display = "block";
+  refreshAll();
+}
+
+async function gh(path, opts = {}) {
+  const r = await fetch(`${API}${path}`, {
+    ...opts,
+    headers: {
+      "Authorization": `Bearer ${getToken()}`,
+      "Accept": "application/vnd.github+json",
+      "Content-Type": "application/json",
+      ...(opts.headers || {}),
+    },
+  });
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (r.status === 204) return null;
+  return r.json();
+}
+
+function toast(msg, kind = "") {
+  const t = document.createElement("div");
+  t.className = `toast ${kind}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+async function loadLatestReport() {
+  const issues = await gh(`/repos/${REPO}/issues?labels=report&state=open&per_page=1`);
+  if (!issues.length) return null;
+  return issues[0];
+}
+
+function parseStatsTable(body) {
+  // Look for the markdown table after "Channel Performance"
+  const m = body.match(/\|\s*Views\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/);
+  const s = body.match(/\|\s*Subs gained\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/);
+  const l = body.match(/\|\s*Likes\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/);
+  const c = body.match(/\|\s*Comments\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/);
+  const w = body.match(/Watch min \(28d\)\s*\|\s*—\s*\|\s*(\d+)\s*\|\s*(\d+)/);
+  const r = body.match(/Avg view % \(28d\)\s*\|\s*—\s*\|\s*—\s*\|\s*([\d.]+)%/);
+  return {
+    views28: m ? m[3] : "—",
+    subs28: s ? s[3] : "—",
+    likes28: l ? l[3] : "—",
+    comments28: c ? c[3] : "—",
+    watchMin28: w ? w[2] : "—",
+    retention: r ? r[1] + "%" : "—",
+  };
+}
+
+function parseTrafficSources(body) {
+  const lines = body.match(/- \*\*([A-Z_]+)\*\*: (\d+) views/g) || [];
+  return lines.map(l => {
+    const m = l.match(/\*\*([A-Z_]+)\*\*: (\d+)/);
+    return { src: m[1], views: parseInt(m[2]) };
+  });
+}
+
+function parseTopics(body) {
+  const re = /### (\d)\.\s*(.+?)\n- \*\*Views:\*\* ([\d,]+) on a ([\d,]+)-sub channel\n- \*\*View\/sub ratio:\*\* ([\d.]+)x.*?\n- \*\*Channel:\*\* (.+?)\n- \*\*Original:\*\* (https?:\/\/\S+)/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(body)) !== null) {
+    out.push({
+      num: m[1], title: m[2].trim(),
+      views: m[3], subs: m[4], ratio: m[5], channel: m[6], url: m[7],
+    });
+  }
+  return out;
+}
+
+async function renderReport() {
+  const issue = await loadLatestReport();
+  if (!issue) {
+    document.getElementById("stats").innerHTML = "<div class='muted'>No report yet</div>";
+    return;
+  }
+  window._reportIssue = issue;
+  const stats = parseStatsTable(issue.body);
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><span class="label">Views</span><span class="value">${stats.views28}</span></div>
+    <div class="stat"><span class="label">Subs gained</span><span class="value">${stats.subs28}</span></div>
+    <div class="stat"><span class="label">Watch min</span><span class="value">${stats.watchMin28}</span></div>
+    <div class="stat"><span class="label">Avg view %</span><span class="value">${stats.retention}</span></div>
+  `;
+  const traffic = parseTrafficSources(issue.body);
+  document.getElementById("traffic").innerHTML = traffic.length
+    ? traffic.map(t => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+        <span style="font-size:13px;color:var(--muted)">${t.src.replace(/_/g, ' ')}</span>
+        <strong>${t.views} views</strong></div>`).join("")
+    : "<div class='muted'>No data yet</div>";
+
+  const topics = parseTopics(issue.body);
+  document.getElementById("topics").innerHTML = topics.length
+    ? topics.map(t => `
+        <div class="topic-card">
+          <div>
+            <strong>${t.num}. ${t.title}</strong>
+            <div class="meta">${t.views} views · ${t.ratio}x ratio · ${t.channel} · <a href="${t.url}" target="_blank">source ↗</a></div>
+          </div>
+          <button onclick="generateTopic(${t.num})">Generate this</button>
+        </div>`).join("")
+    : "<div class='muted'>No topic picks in latest report</div>";
+}
+
+async function generateTopic(n) {
+  if (!confirm(`Trigger video generation for topic #${n}? This costs ~$0.75 in API credits and takes ~15 minutes.`)) return;
+  try {
+    await gh(`/repos/${REPO}/issues/${window._reportIssue.number}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body: `/generate ${n}` }),
+    });
+    toast(`✅ /generate ${n} posted. Workflow will pick it up.`, "success");
+  } catch (e) {
+    toast(`❌ ${e.message}`, "error");
+  }
+}
+
+async function renderVideos() {
+  const issues = await gh(`/repos/${REPO}/issues?labels=video&state=open&per_page=10`);
+  document.getElementById("videos").innerHTML = issues.length
+    ? issues.map(i => `
+        <div class="topic-card">
+          <div>
+            <strong>${i.title}</strong>
+            <div class="meta">Opened ${timeAgo(i.created_at)} · <a href="${i.html_url}" target="_blank">view ↗</a></div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="secondary" onclick="uploadVariant(${i.number}, 1)">1</button>
+            <button class="secondary" onclick="uploadVariant(${i.number}, 2)">2</button>
+            <button class="secondary" onclick="uploadVariant(${i.number}, 3)">3</button>
+          </div>
+        </div>`).join("")
+    : "<div class='muted'>No videos awaiting review</div>";
+}
+
+async function uploadVariant(issueNum, variant) {
+  try {
+    await gh(`/repos/${REPO}/issues/${issueNum}/comments`, {
+      method: "POST", body: JSON.stringify({ body: `/upload ${variant}` }),
+    });
+    toast(`✅ Picked variant ${variant}.`, "success");
+  } catch (e) { toast(`❌ ${e.message}`, "error"); }
+}
+
+async function renderRuns() {
+  const data = await gh(`/repos/${REPO}/actions/runs?per_page=8`);
+  document.getElementById("runs").innerHTML = data.workflow_runs.map(r => `
+    <div class="run-row">
+      <div>
+        <strong>${r.name}</strong>
+        <div class="meta">${timeAgo(r.created_at)} · ${r.event}</div>
+      </div>
+      <span class="badge ${r.status === 'completed' ? r.conclusion : r.status}">
+        ${r.status === 'completed' ? r.conclusion : r.status}
+      </span>
+    </div>`).join("");
+}
+
+function timeAgo(iso) {
+  const d = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (d < 60) return "just now";
+  if (d < 3600) return `${Math.floor(d/60)} min ago`;
+  if (d < 86400) return `${Math.floor(d/3600)} hr ago`;
+  return `${Math.floor(d/86400)} days ago`;
+}
+
+async function refreshAll() {
+  try {
+    await Promise.all([renderReport(), renderVideos(), renderRuns()]);
+  } catch (e) {
+    toast(`Error: ${e.message}`, "error");
+    if (e.message.includes("401")) logout();
+  }
+}
+
+// Auto-refresh every 60s
+setInterval(refreshAll, 60000);
+</script>
+</body>
+</html>
