@@ -130,6 +130,11 @@
     </nav>
   </header>
 
+  <div class="card" id="autonomyCard">
+    <h2>🎛️ Autonomy Mode</h2>
+    <div id="autonomyControls" class="loading">Loading…</div>
+  </div>
+
   <div class="grid-2">
     <div class="card">
       <h2>📊 Channel — Last 28 Days</h2>
@@ -355,9 +360,59 @@ async function pullFreshReport() {
   } catch (e) { toast(`❌ ${e.message}`, "error"); }
 }
 
+async function loadAutonomy() {
+  // Read autonomy.json from repo root (raw file API)
+  const r = await gh(`/repos/${REPO}/contents/autonomy.json`);
+  const cfg = JSON.parse(atob(r.content));
+  window._autonomySha = r.sha;
+  const current = cfg.mode || "assisted";
+  const modes = ["manual", "assisted", "unattended"];
+  document.getElementById("autonomyControls").innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      ${modes.map(m => `
+        <button class="${m === current ? '' : 'secondary'}" onclick="setAutonomy('${m}')">
+          ${m === current ? '● ' : ''}${m.toUpperCase()}
+        </button>`).join("")}
+      <span class="muted" style="margin-left:8px;font-size:13px;">
+        ${current === "manual" ? "Nothing auto-progresses. You decide everything." :
+          current === "assisted" ? "Auto-progresses after 60 min if you don't reply." :
+          "Fully unattended — auto-picks topic #1 and variant 1 immediately."}
+      </span>
+    </div>
+  `;
+}
+
+async function setAutonomy(mode) {
+  if (!confirm(`Switch to ${mode.toUpperCase()} mode?\n\n` +
+               (mode === "unattended" ? "Videos will publish without any approval from you. You can switch back any time." :
+                mode === "manual" ? "Nothing will auto-progress. You must reply to every step." :
+                "1-hour wait at each step before auto-progress."))) return;
+  try {
+    const newCfg = {
+      mode,
+      modes_explained: {
+        manual: "Wait for /generate and /upload comments forever. Nothing happens automatically.",
+        assisted: "Wait 60 minutes for your reply, then auto-progress. Recommended default while learning the system.",
+        unattended: "Auto-progress immediately on every step. Daily report → topic #1 → variant 1 → upload. Fully hands-off.",
+      },
+      wait_minutes_per_mode: { manual: -1, assisted: 60, unattended: 0 },
+    };
+    const content = btoa(JSON.stringify(newCfg, null, 2) + "\n");
+    await gh(`/repos/${REPO}/contents/autonomy.json`, {
+      method: "PUT",
+      body: JSON.stringify({
+        message: `Switch autonomy mode to ${mode}`,
+        content, sha: window._autonomySha,
+      }),
+    });
+    toast(`✅ Switched to ${mode.toUpperCase()} mode`, "success");
+    await loadAutonomy();
+  } catch (e) { toast(`❌ ${e.message}`, "error"); }
+}
+
 async function refreshAll() {
   try {
-    await Promise.all([renderReport(), renderVideos(), renderRuns()]);
+    await Promise.all([loadAutonomy(), renderReport(), renderVideos(), renderRuns()]);
   } catch (e) {
     toast(`Error: ${e.message}`, "error");
     if (e.message.includes("401")) logout();
